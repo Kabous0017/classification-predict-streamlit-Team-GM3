@@ -45,12 +45,23 @@ from nltk import download as nltk_download  # For downloading nltk packages, her
 import regex  # Regex is used for regular expression matching and manipulation.
 import string  # Provides constants and classes for string manipulation.
 import unicodedata  # Provides access to the Unicode Character Database for processing Unicode characters.
-
+from sklearn.feature_extraction.text import TfidfVectorizer
+from scipy.sparse import hstack  # Used for stacking sparse matrices horizontally.
 
 # Vectorizer
 news_vectorizer = open("resources/tfidfvect.pkl","rb")
 tweet_cv = joblib.load(news_vectorizer) # loading your vectorizer from the pkl file
 
+#new vectorizer
+#tfid_vec = open("resources/tfid.pkl","rb")
+#tweet_cs = joblib.load(tfid_vec)
+
+# loading your vectorizer from the pkl file
+#with open('resources/tdif_vect.pkl', 'rb') as file:
+        #tdfif_vect = pickle.load(file)
+
+with open('resources/TFIDF_Vec.pkl', 'rb') as file:
+        tf_vect = pickle.load(file)	
 # Load your raw data
 raw = pd.read_csv("resources/train.csv")
 
@@ -58,7 +69,266 @@ raw = pd.read_csv("resources/train.csv")
 df_train = pd.read_csv('https://github.com/BeSe7en/classification_team_GM3/blob/main/train.csv?raw=true')
 
 #preprocess function
-def preprocess_tweet(tweet):
+def preprocess_tweet(tweets):
+	# function to determine if there is a retweet within the tweet
+	def is_retweet(tweet):
+		word_list = tweet.split()
+		if "RT" in word_list:
+			return 1
+		else:
+			return 0
+	tweets["is_retweet"] = tweets["message"].apply(is_retweet, 1)
+
+	# function to extract retween handles from tweet	
+	def get_retweet(tweet):
+		word_list = tweet.split()
+		if word_list[0] == 'RT':
+			handle = word_list[1]
+		else:
+			handle = ''
+		handle = handle.replace(':', "")
+
+		return handle
+	tweets['retweet_handle'] = tweets['message'].apply(get_retweet,1)
+
+	# function to count the number of hashtags within the tweet
+	def count_hashtag(tweet):
+		count = 0
+
+		word_list = tweet.split()
+		for word in word_list:
+			if word[0] == "#":
+				count += 1
+
+		return count
+	tweets["hashtag_count"] = tweets["message"].apply(count_hashtag, 1)
+
+	# function to extract the hashtags within the tweet
+	def get_hashtag(tweet):
+		hashtags = []
+		word_list = tweet.split()
+		for word in word_list:
+			if word[0] == "#":
+				hashtags.append(word)
+
+		returnstr = ""
+
+		for tag in hashtags:
+			returnstr + " " + tag
+
+		return returnstr
+	tweets["hashtags"] = tweets["message"].apply(get_hashtag, 1)
+
+	# function to count the number of mentions within the tweet
+	def count_mentions(tweet):
+		count = 0
+		word_list = tweet.split()
+		if "RT" in word_list:
+			count += -1 # remove mentions contained in retweet from consideration
+		
+		for word in word_list:
+			if word[0] == '@':
+				count += 1
+		if count == -1:
+			count = 0
+		return count
+	tweets["mention_count"] = tweets["message"].apply(count_mentions, 1)
+
+	def get_mentions(tweet):
+		mentions = []
+		word_list = tweet.split()
+
+		if "RT" in word_list:
+			word_list.pop(1) # Retweets don't count as mentions, so we remove the retweet handle from consideration
+
+		for word in word_list:
+			if word[0] == '@':
+				mentions.append(word)
+
+		returnstr = ""
+
+		for handle in mentions:
+			returnstr + " " + handle
+
+		return returnstr
+	tweets["mentions"] =  tweets["message"].apply(get_mentions, 1)
+
+	# function to count the number of web links within tweet
+	def count_links(tweet):
+		count = tweet.count("https:")
+		return count 
+	tweets["link_count"] = tweets["message"].apply(count_links, 1)
+
+	# function to replace URLs within the tweet
+	pattern_url = r'http[s]?://(?:[A-Za-z]|[0-9]|[$-_@.&+]|[!*\(\),]|(?:%[0-9A-Fa-f][0-9A-Fa-f]))+'
+	subs_url = r'url-web'
+	tweets['message'] = tweets['message'].replace(to_replace = pattern_url, value = subs_url, regex = True)
+	
+	# function count number of newlines within tweet
+	def enter_count(tweet):
+		count = tweet.count('\n')
+		return count
+	tweets["newline_count"] = tweets["message"].apply(enter_count, 1)
+
+	# function to count number of exclaimation marks within tweet
+	def exclamation_count(tweet):
+		count = tweet.count('!')
+		return count 
+	tweets["exclamation_count"] =  tweets["message"].apply(exclamation_count, 1)
+	
+	# Remove handles from tweet
+	def remove_handles(tweet):
+		wordlist = tweet.split()
+		for word in wordlist:
+			if word[0] == "@":
+				wordlist.remove(word)
+		returnstr = ''
+
+		for word in wordlist:
+			returnstr += word + " "
+
+		return returnstr
+	tweets['message'] = tweets['message'].apply(remove_handles)
+
+	# Remove hashtags from tweet
+	def remove_hashtags(tweet):
+		wordlist = tweet.split()
+		for word in wordlist:
+			if word[0] == '#':
+				wordlist.remove(word)
+		returnstr = ''
+		for word in wordlist:
+			returnstr += word + " "
+
+		return returnstr
+	
+	tweets["message"] = tweets["message"].apply(remove_hashtags)
+
+	# Remove RT from tweet
+	def remove_rt(tweet):
+		wordlist = tweet.split()
+		for word in wordlist:
+			if word == 'rt' or word == 'RT':
+				wordlist.remove(word)
+		returnstr = ''
+
+		for word in wordlist:
+			returnstr += word + ' '
+
+		return returnstr
+	
+	tweets['message'] = tweets['message'].apply(remove_rt)
+
+	# function to translate emojis and emoticons
+	def fix_emojis(tweet):
+		newtweet = emoji.demojize(tweet)  # Translates 👍 emoji into a form like :thumbs_up: for example
+		newtweet = newtweet.replace("_", " ") # Beneficial to split emoji text into multiple words
+		newtweet = newtweet.replace(":", " ") # Separate emoji from rest of the words
+		returntweet = newtweet.lower() # make sure no capitalisation sneaks in
+
+		return returntweet
+	tweets["message"] = tweets['message'].apply(fix_emojis)
+
+	# function to remove punctuation from the tweet
+	def remove_punctuation(tweet):
+		return ''.join([l for l in tweet if l not in string.punctuation])
+	
+	tweets['message'] = tweets['message'].apply(remove_punctuation)
+	
+	#transform tweets into lowercase version of tweets
+	def lowercase(tweet):
+		return tweet.lower()
+	tweets["message"] = tweets["message"].apply(lowercase)
+
+	# remove stop words from the tweet
+	def remove_stop_words(tweet):
+		words = tweet.split()
+		return " " .join([t for t in words if t not in stopwords.words('english')])
+	tweets["message"] = tweets['message'].apply(remove_stop_words)
+
+	# function to replace contractions
+	def fix_contractions(tweet):
+		expanded_words = []
+		for word in tweet.split():
+			expanded_words.append(contractions.fix(word))
+
+		returnstr = " ".join(expanded_words)
+		return returnstr
+	tweets["message"] = tweets['message'].apply(fix_contractions)
+
+	# function to replace strange characters in tweet with closest ascii equivalent
+	def clean_tweet(tweet):
+		normalized_tweet = unicodedata.normalize('NFKD',tweet)
+
+		cleaned_tweet = normalized_tweet.encode('ascii', 'ignore').decode('utf-8')
+
+		return cleaned_tweet.lower()
+	tweets["message"] = tweets['message'].apply(clean_tweet)
+
+	#function to remove numbers from tweet
+	def remove_numbers(tweet):
+		return ''.join(char for char in tweet if not char.isdigit())
+	
+	tweets["message"] = tweets['message'].apply(remove_numbers)
+
+	# Create a lemmatizer object
+	lemmatizer = WordNetLemmatizer()
+
+	# Create function to lemmatize tweet content
+	def tweet_lemma(tweet,lemmatizer):
+		list_of_lemmas = [lemmatizer.lemmatize(word) for word in tweet.split()]
+		return " ".join(list_of_lemmas)
+	tweets["message"] = tweets["message"].apply(tweet_lemma, args=(lemmatizer, ))
+
+	# Make dataframe of all word counts in the data
+	twt_wordcounts = pd.DataFrame(tweets['message'].str.split(expand=True).stack().value_counts())
+	twt_wordcounts.reset_index(inplace=True)
+	twt_wordcounts.rename(columns={"index": "word", 0:"count"}, inplace=True)
+	
+	# Extract unique words from data
+	twt_unique_words = twt_wordcounts[twt_wordcounts["count"]==1]
+
+	# make a list of unique words
+	unique_wordlist = list(twt_unique_words["word"])
+
+	# Function to remove unique words from data
+	def remove_unique_words(tweet):
+		words = tweet.split()
+		return ' '.join([t for t in words if t not in unique_wordlist])
+	tweets['message'] = tweets['message'].apply(remove_unique_words)
+
+	#function to add retweets to message 
+	def add_rt_handle(row):
+		if row["retweet_handle"] == "":
+			ret = row["message"]
+		else:
+			ret = row["message"] + " rt " + row["retweet_handle"]
+		return ret
+	tweets["message"] = tweets.apply(add_rt_handle, axis=1)
+
+	# Function to add retweets to message
+	def add_hashtag(row):
+		if row["hashtags"] == "":
+			ret = row["message"]
+		else:
+			ret = row["message"] + " " + row["hashtags"]
+		return ret
+	tweets["message"] = tweets.apply(add_hashtag, axis = 1)
+
+	# Function to add mentions to message
+	def add_rt_handle(row):
+		if row["mentions"] == "":
+			ret = row["message"]
+		else:
+			ret = row["message"] + " " + row["mentions"]
+		return ret
+	tweets["message"] = tweets.apply(add_rt_handle, axis = 1)
+
+	# drop redundant columns
+	tweets = tweets.drop(["retweet_handle", "hashtags", "mentions"], axis=1)
+
+	return tweets
+#def preprocess_tweet(tweet):
 	# function to determine if there is a retweet within the tweet
 	def is_retweet(tweet):
 		word_list = tweet.split()
@@ -200,7 +470,7 @@ def preprocess_tweet(tweet):
 		for word in tweet.split():
 			expanded_words.append(contractions.fix(word))
 
-		returnstr + " ".join(expanded_words)
+		returnstr = " ".join(expanded_words)
 
 		return returnstr
 	
@@ -243,7 +513,7 @@ def preprocess_csv(tweets):
 		handle = handle.replace(':', "")
 
 		return handle
-	tweets['message'] = tweets['message'].apply(get_retweet,1)
+	tweets['retweet_handle'] = tweets['message'].apply(get_retweet,1)
 
 	# function to count the number of hashtags within the tweet
 	def count_hashtag(tweet):
@@ -325,7 +595,7 @@ def preprocess_csv(tweets):
 	tweets["newline_count"] = tweets["message"].apply(enter_count, 1)
 
 	# function to count number of exclaimation marks within tweet
-	def exclaimation_count(tweet):
+	def exclamation_count(tweet):
 		count = tweet.count('!')
 		return count 
 	tweets["exclamation_count"] =  tweets["message"].apply(exclamation_count, 1)
@@ -387,19 +657,18 @@ def preprocess_csv(tweets):
 	def remove_punctuation(tweet):
 		return ''.join([l for l in tweet if l not in string.punctuation])
 	
-	tweet = remove_punctuation(tweet)
+	tweets['message'] = tweets['message'].apply(remove_punctuation)
 	
 	#transform tweets into lowercase version of tweets
-	def lowercase(tweets):
+	def lowercase(tweet):
 		return tweet.lower()
-	tweet = lowercase(tweet)
 	tweets["message"] = tweets["message"].apply(lowercase)
 
 	# remove stop words from the tweet
 	def remove_stop_words(tweet):
 		words = tweet.split()
 		return " " .join([t for t in words if t not in stopwords.words('english')])
-	tweet = remove_stop_words(tweet)
+	tweets["message"] = tweets['message'].apply(remove_stop_words)
 
 	# function to replace contractions
 	def fix_contractions(tweet):
@@ -407,8 +676,7 @@ def preprocess_csv(tweets):
 		for word in tweet.split():
 			expanded_words.append(contractions.fix(word))
 
-		returnstr + " ".join(expanded_words)
-
+		returnstr = " ".join(expanded_words)
 		return returnstr
 	tweets["message"] = tweets['message'].apply(fix_contractions)
 
@@ -493,7 +761,7 @@ def main():
 
 	image = Image.open('logo.jpg')
 
-	col1, col2 = st.columns([1, 3])
+	col1, col2 = st.columns([3, 3])
 	with col1:
 		st.image(image, use_column_width=True)
 	with col2:
@@ -512,8 +780,49 @@ def main():
 		st.info('Welcome to the homepage of That\'s Classified Data Solutions (PTY) LTD ')
 		st.markdown("At That\'s Classified Data Solutions we consider ourselves your partners, and we take care of your data so that you can focus on your customers’ needs. The goal of every member of our team is to maximise your productivity, increase your profits, and most of all, future-proof your business. ")
 		st.subheader('Meet the team')
-		    
+
+		#director 
+		col1, col2 = st.columns([1, 6])
+		with col1:
+			image_k = Image.open('kobus.jpg')
+			st.image(image_k, use_column_width=True,caption = 'Director')
+
+		# assistant director
+		col1, col2 = st.columns([1, 6])
+		with col1:
+			image_m = Image.open('mkhanyisi.jpg')
+			st.image(image_m, use_column_width=True, caption = 'Assistant director')
+
+		# data scientist 1
+		col1, col2 = st.columns([1, 8])
+		with col1:
+			image_h = Image.open('hilda.jpg')
+			st.image(image_h, use_column_width=True, caption = 'Data Scientist')
 		
+		# data scientist 2
+		col1, col2 = st.columns([1, 8])
+		with col1:
+			image_t = Image.open('temishka.jpg')
+			st.image(image_t, use_column_width=True, caption = 'Data Scientist')
+
+		# data scientist 3
+		col1, col2 = st.columns([1, 8])
+		with col1:
+			image_kg = Image.open('kgomotso.jpg')
+			st.image(image_kg, use_column_width=True, caption = 'Data Scientist')
+
+		# data scientist 4
+		col1, col2 = st.columns([1, 6])
+		with col1:
+			image_i = Image.open('isaac.jpg')
+			st.image(image_i, use_column_width=True, caption = 'Data Scientist')
+
+		# data scientist 5
+		col1, col2 = st.columns([1, 6])
+		with col1:
+			image_b= Image.open('bongokuhle.jpg')
+			st.image(image_b, use_column_width=True, caption = 'Data Scientist')
+
 	# Building out the "Model Explaination" page
 	if selection == "Model Explainations":
 		options = ['Logistic Regression','Linear Support Vector Classifier','Random Forest Classifier','XGBoost Classifier','CatBoost Classifer', 'Neural Networks Classifier','Multinomial Naives Bayes Classifier','KNN Classifier']
@@ -612,40 +921,62 @@ def main():
 			# Creating a text box for user input
 			tweet_text = st.text_area("Enter tweet here","Type Here")
 
-			options = [" Multinomial Naive Bayes Classifier","XGBoost Classifier", "Linear Support Vector Classifier"]
+			options = [" Multinomial Naive Bayes Classifier","Logistic Regression Classifier", "Linear Support Vector Classifier","XGBoost Classifier", "Gaussian Naives Bayes Classifier","CatBoost Classfier"]
 			selection = st.selectbox("Choose Your Model", options)
 
 			if st.button("Classify Tweet"):
 				#process single tweet using our preprocess_tweet() function
-				processed_tweet = preprocess_tweet(tweet_text)
+
+				# create dataframe for tweet
+				text = [tweet_text]
+				df_tweet = pd.DataFrame(text, columns=['message'])
+
+				processed_tweet = preprocess_tweet(df_tweet)
 				
 				# Create a dictionary for tweet prediction outputs
 				dictionary_tweets = {'[-1]': "A tweet refuting man-made climate change",
                      				  '[0]': "A tweet neither supporting nor refuting the belief of man-made climate change",
                      				  '[1]': "A pro climate change tweet",
                      				  '[2]': "This tweet refers to factual news about climate change"}
-				# Transforming user input with vectorizer
-                
-				vect_text = tweet_cv.transform([processed_tweet]).toarray()
 
 				# Load your .pkl file with the model of your choice + make predictions
 				# Try loading in multiple models to give the user a choice
 				predictor = None
+				X_pred = None
 				if selection == "Multinomial Naive Bayes Classifier":
-					mnb = pickle.load(open())
-					predictor = mnb	
-				elif selection == "XGBoost Classifier":
-					xgb = pickle.load(open())
-					predictor = xgb
+					predictor = joblib.load(open(os.path.join("resources/MultinomialNaiveBeyes.pkl"),"rb"))
+					#mnb = pickle.load(open('/resources/MultinomialNaiveBeyes.pkl','rb'))
+					#predictor = mnb	
+				elif selection == "Logistic Regression Classifier":
+					#lr = pickle.load(open('\resources\LogisticRegression.pkl','rb'))
+					predictor = joblib.load(open(os.path.join("resources/LogisticRegression.pkl"),"rb"))
 				elif selection == "Linear Support Vector Classifier":
-					lsvc = pickle.load(open())
-					predictor = lsvc
-		
+					#lsvc = pickle.load(open('/resources/LinearSVC.pkl','rb'))
+					predictor = joblib.load(open(os.path.join("resources/LinearSVC.pkl"),"rb"))
+					#predictor = lsvc
+				elif selection == "XGBoost Classifier":
+					predictor = joblib.load(open(os.path.join("resources/XGBoost.pkl"),"rb"))
+				elif selection == "Gaussian Naives Bayes Classifier":
+					predictor = joblib.load(open(os.path.join("resources/GaussianNaiveBeyes.pkl"),"rb"))
+				elif selection == "CatBoost Classfier":
+					predictor = joblib.load(open(os.path.join("resources/CatBoost.pkl"),"rb"))
+
 				#predictor = joblib.load(open(os.path.join("resources/Logistic_regression.pkl"),"rb"))
 
-				prediction = predictor.predict(vect_text)
+				
+				# Transforming user input with vectorizer
+				X_pred = processed_tweet['message']
+				vect_text = tf_vect.transform(X_pred)
+				
+				sparse_vec_msg_df = pd.DataFrame.sparse.from_spmatrix(vect_text, columns = tf_vect.get_feature_names_out())
+				df_vectorized_combined = pd.concat([processed_tweet.reset_index(drop=True), sparse_vec_msg_df.reset_index(drop=True)], axis=1)
+				df_vectorized_combined = df_vectorized_combined.drop("message", axis='columns')
+
+				prediction = predictor.predict(df_vectorized_combined)
 				prediction_str = np.array_str(prediction)
-	
+
+				prediction_str = prediction_str.replace(".","")
+				
 				# When model has successfully run, will print prediction
 				# You can use a dictionary or similar structure to make this output
 				# more human interpretable.
@@ -660,29 +991,34 @@ def main():
 				processed_df = preprocess_csv(df_uploaded)
 				X_pred = processed_df['message']
 			
-			options = [" Multinomial Naive Bayes Classifier","XGBoost Classifier", "Linear Support Vector Classifier"]
+			options = [" Multinomial Naive Bayes Classifier","Logistic Regression Classifier", "Linear Support Vector Classifier"]
 			selection = st.selectbox("Choose Your Model", options)
 
 			if st.button("Classify CSV"):
 				# Transforming user input with vectorizer
-				vect_text = tweet_cv.transform([tweet_text]).toarray()
+				#vect_text = tweet_cv.transform([tweet_text]).toarray()
 				# Load your .pkl file with the model of your choice + make predictions
 				# Try loading in multiple models to give the user a choice
 				predictor = None
 				if selection == "Multinomial Naive Bayes Classifier":
-					mnb = pickle.load(open())
+					mnb = pickle.load(open('/resources/MultinomialNaiveBeyes.pkl','rb'))
 					predictor = mnb	
-				elif selection == "XGBoost Classifier":
-					xgb = pickle.load(open())
-					predictor = xgb
+				elif selection == "Logistic Regression Classifier":
+					#lr = pickle.load(open('/resources/LogisticRegression.pkl','rb'))
+					predictor = joblib.load(open(os.path.join("resources/LogisticRegression.pkl"),"rb"))
 				elif selection == "Linear Support Vector Classifier":
-					lsvc = pickle.load(open())
+					lsvc = pickle.load(open('/resources/LinearSVC.pkl','rb'))
 					predictor = lsvc
 
 				#predictor = joblib.load(open(os.path.join("resources/Logistic_regression.pkl"),"rb"))
 
-				vect_text = vect.transform(X_pred)
-				prediction = predictor.predict(vect_text)
+				vect_text = tf_vect.transform(X_pred)
+				sparse_vec_msg_df = pd.DataFrame.sparse.from_spmatrix(vect_text, columns = tf_vect.get_feature_names_out())
+				df_vectorized_combined = pd.concat([processed_df.reset_index(drop=True), sparse_vec_msg_df.reset_index(drop=True)], axis=1)
+				df_vectorized_combined = df_vectorized_combined.drop(["tweetid","message"], axis='columns')
+
+
+				prediction = predictor.predict(df_vectorized_combined)
 				df_download = df_uploaded.copy()
 				df_download['sentiment'] = prediction
 
