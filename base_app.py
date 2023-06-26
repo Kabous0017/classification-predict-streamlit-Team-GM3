@@ -499,8 +499,6 @@ def main():
 	with col2:
 		st.title("Twitter Sentiment Classifier App")
 	#add more text
-	st.write('Predict the sentiment of each twitter using various models with each tweet falling into one of 4 categories: anti-man made climate change, neutral, pro-man made climate change and lastly, whether a tweet represent factual news!')
-	st.write('To access the codebase for this application, please visit the following GitHub repository:https://github.com/Kabous0017/Advanced_Classification_-_Team_GM3_2301FTDS')
 
 	# Creating sidebar with selection box -
 	# you can create multiple pages this way
@@ -509,6 +507,13 @@ def main():
 	options = ["Home","Prediction", "Model Explainations","Explore the data"]
 	selection = st.sidebar.radio("Choose Option", options)
 
+	#build out the "home" company page
+	if selection == "Home":
+		st.info('Welcome to the homepage of That\'s Classified Data Solutions (PTY) LTD ')
+		st.markdown("At That\'s Classified Data Solutions we consider ourselves your partners, and we take care of your data so that you can focus on your customers’ needs. The goal of every member of our team is to maximise your productivity, increase your profits, and most of all, future-proof your business. ")
+		st.subheader('Meet the team')
+		    
+		
 	# Building out the "Model Explaination" page
 	if selection == "Model Explainations":
 		options = ['Logistic Regression','Linear Support Vector Classifier','Random Forest Classifier','XGBoost Classifier','CatBoost Classifer', 'Neural Networks Classifier','Multinomial Naives Bayes Classifier','KNN Classifier']
@@ -598,6 +603,8 @@ def main():
 		
 	# Building out the predication page
 	if selection == 'Prediction':
+		st.write('Predict the sentiment of each twitter using various models with each tweet falling into one of 4 categories: anti-man made climate change, neutral, pro-man made climate change and lastly, whether a tweet represent factual news!')
+		st.write('To access the codebase for this application, please visit the following GitHub repository:https://github.com/Kabous0017/Advanced_Classification_-_Team_GM3_2301FTDS')
 		pred_type = st.sidebar.selectbox("Predict sentiment of a single tweet or submit a csv for multiple tweets", ('Single Tweet', 'Multiple Tweets'))
 
 		if pred_type == "Single Tweet":
